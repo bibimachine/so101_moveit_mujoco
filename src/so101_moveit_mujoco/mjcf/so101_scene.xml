@@ -1,0 +1,34 @@
+<mujoco model="so101_scene">
+  <include file="so101.xml" />
+  <!-- 网格放在包根 meshes/，这里覆盖 so101.xml 的 meshdir="assets"（MJCF 多 compiler 属性合并，后出现者优先） -->
+  <compiler meshdir="../meshes" />
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
+    <rgba haze="0.15 0.25 0.35 1" />
+    <global azimuth="160" elevation="-20" />
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072" />
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2" />
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
+    <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
+    <!-- 单目 RGB 相机（eye-to-hand 固定外置），位姿与 gazebo 版 so101_camera.xacro 完全一致：
+         位于 (0,-0.6,0.45) 看向工作区中部。MuJoCo 相机系是 x右y上z后（OpenGL 惯例），
+         quat = camera_link(rpy 0 0.46 1.5708) ⊗ 光轴系(rpy -1.5708 0 -1.5708) ⊗ 绕X转π；
+         fovy 46.82° 由 gazebo hfov 1.047rad@640x480 按 4:3 纵向换算，保证视角相同 -->
+    <camera name="so101_camera" mode="fixed" fovy="46.82" resolution="640 480"
+            pos="0 -0.6 0.45" quat="0.8496922 0.527279 0 0" />
+    <!-- 固定障碍物：红色小圆柱（r=1.5cm h=6cm，与 gazebo 版 objects/cylinder.urdf 同规格），
+         位置与 gazebo 版 spawn_cylinder_node 一致（落在夹爪可达范围内）。
+         MuJoCo 运行时不能增删 body，故固定写死在场景里 -->
+    <body name="cylinder" pos="0.303 0.009 0.031">
+      <geom name="cylinder_geom" type="cylinder" size="0.015 0.03" rgba="0.85 0.2 0.2 1" mass="0.05"/>
+    </body>
+  </worldbody>
+</mujoco>

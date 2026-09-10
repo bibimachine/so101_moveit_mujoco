@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- SO-101 的 ros2_control 配置：MuJoCo 硬件接口（use_mujoco:=false 时退回 mock 硬件）
+       MJCF 路径、headless 等插件参数都写在这里，由 so101.urdf.xacro 引用 -->
+  <xacro:macro name="so101_ros2_control" params="use_mujoco:=true headless:=false">
+    <ros2_control name="MujocoSystem" type="system">
+      <xacro:if value="${use_mujoco}">
+        <hardware>
+          <plugin>mujoco_ros2_control/MujocoSystemInterface</plugin>
+          <param name="mujoco_model">$(find so101_moveit_mujoco)/mjcf/so101_scene.xml</param>
+          <param name="sim_speed_factor">1.0</param>
+          <param name="headless">${headless}</param>
+          <!-- 相机图像发布频率（Hz），渲染由 mujoco_ros2_control 的离屏线程完成 -->
+          <param name="camera_publish_rate">10.0</param>
+        </hardware>
+      </xacro:if>
+      <xacro:unless value="${use_mujoco}">
+        <hardware>
+          <plugin>mock_components/GenericSystem</plugin>
+        </hardware>
+      </xacro:unless>
+      <joint name="shoulder_pan">
+        <command_interface name="position"/>
+        <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="shoulder_lift">
+        <command_interface name="position"/>
+        <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="elbow_flex">
+        <command_interface name="position"/>
+        <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="wrist_flex">
+        <command_interface name="position"/>
+        <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="wrist_roll">
+        <command_interface name="position"/>
+        <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="gripper">
+        <command_interface name="position"/>
+        <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+        <state_interface name="velocity"/>
+      </joint>
+      <xacro:if value="${use_mujoco}">
+        <!-- 相机 sensor：name 必须与 MJCF 中的 <camera name> 一致，
+             mujoco_ros2_control 按此匹配相机并发布图像；话题与 gazebo 版对齐 -->
+        <sensor name="so101_camera">
+          <param name="frame_name">so101_camera_optical_frame</param>
+          <param name="info_topic">/so101_camera/camera_info</param>
+          <param name="image_topic">/so101_camera/image_raw</param>
+          <param name="depth_topic">/so101_camera/depth/image_raw</param>
+        </sensor>
+      </xacro:if>
+    </ros2_control>
+  </xacro:macro>
+</robot>
