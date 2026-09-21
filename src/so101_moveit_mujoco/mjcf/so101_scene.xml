@@ -24,11 +24,20 @@
          fovy 46.82° 由 gazebo hfov 1.047rad@640x480 按 4:3 纵向换算，保证视角相同 -->
     <camera name="so101_camera" mode="fixed" fovy="46.82" resolution="640 480"
             pos="0 -0.6 0.45" quat="0.8496922 0.527279 0 0" />
-    <!-- 固定障碍物：红色小圆柱（r=1.5cm h=6cm，与 gazebo 版 objects/cylinder.urdf 同规格），
+    <!-- 可抓取障碍物：红色小圆柱（r=1.5cm h=6cm，与 gazebo 版 objects/cylinder.urdf 同规格），
          位置与 gazebo 版 spawn_cylinder_node 一致（落在夹爪可达范围内）。
-         MuJoCo 运行时不能增删 body，故固定写死在场景里 -->
+         MuJoCo 运行时不能增删 body，故固定写死在场景里。
+         注意: body 里必须有 <freejoint/> 才是自由刚体; 无 joint 的 body 会焊死在父 body 上
+         (本文件曾因此把"夹不起来"——圆柱纹丝不动)。设为自由体后臂撞到它会滚走, 行为更真实,
+         代价是避障场景中圆柱位置不再固定 -->
     <body name="cylinder" pos="0.303 0.009 0.031">
-      <geom name="cylinder_geom" type="cylinder" size="0.015 0.03" rgba="0.85 0.2 0.2 1" mass="0.05"/>
+      <freejoint/>
+      <!-- 摩擦参数是 MuJoCo 默认值 (1.0, 0.005, 0.0001): 滚动摩擦 0.0001 几乎为零,
+           圆截面一受挤压就滚出夹爪 ("太滑" 的主因)。此处整体抬高并加扭转维 (condim=4
+           需成对 geom 都 >=4 才生效, 手指碰撞 geom 默认 condim=3, 故圆柱端必须显式声明)。
+           接触对摩擦取两端较大值, 只改圆柱即可覆盖全场景接触 -->
+      <geom name="cylinder_geom" type="cylinder" size="0.015 0.03" rgba="0.85 0.2 0.2 1"
+            mass="0.05" friction="2.0 0.05 0.05" condim="4"/>
     </body>
   </worldbody>
 </mujoco>

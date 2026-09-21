@@ -1,0 +1,42 @@
+<?xml version="1.0" ?>
+<!-- SO101 + MuJoCo 的 SRDF
+     与 gazebo 版差异: mujoco URDF(so101.urdf.xacro)无 world link, root 即 base_link,
+     故没有 world_joint/virtual_joint; planning_frame 直接用 base_link。 -->
+<robot name="so101_new_calib">
+    <group name="so101_arm">
+        <joint name="shoulder_pan"/>
+        <joint name="shoulder_lift"/>
+        <joint name="elbow_flex"/>
+        <joint name="wrist_flex"/>
+        <joint name="wrist_roll"/>
+    </group>
+    <group name="so101_hand">
+        <joint name="gripper"/>
+        <joint name="gripper_frame_joint"/>
+    </group>
+    <!-- 默认位形(与 ros2_control xacro 的 initial_value 对齐, 全零) -->
+    <group_state name="home" group="so101_arm">
+        <joint name="elbow_flex" value="0"/>
+        <joint name="shoulder_lift" value="0"/>
+        <joint name="shoulder_pan" value="0"/>
+        <joint name="wrist_flex" value="0"/>
+        <joint name="wrist_roll" value="0"/>
+    </group_state>
+    <group_state name="open" group="so101_hand">
+        <joint name="gripper" value="1.5226"/>
+    </group_state>
+    <group_state name="close" group="so101_hand">
+        <joint name="gripper" value="-0.1745"/>
+    </group_state>
+    <!-- 相邻/永不碰撞对(与 gazebo 版一致; 无此项则 home 位形报 shoulder_link↔upper_arm_link 自碰撞) -->
+    <disable_collisions link1="base_link" link2="shoulder_link" reason="Adjacent"/>
+    <disable_collisions link1="base_link" link2="upper_arm_link" reason="Never"/>
+    <disable_collisions link1="gripper_link" link2="lower_arm_link" reason="Never"/>
+    <disable_collisions link1="gripper_link" link2="moving_jaw_so101_v1_link" reason="Adjacent"/>
+    <disable_collisions link1="gripper_link" link2="wrist_link" reason="Adjacent"/>
+    <disable_collisions link1="lower_arm_link" link2="moving_jaw_so101_v1_link" reason="Never"/>
+    <disable_collisions link1="lower_arm_link" link2="upper_arm_link" reason="Adjacent"/>
+    <disable_collisions link1="lower_arm_link" link2="wrist_link" reason="Adjacent"/>
+    <disable_collisions link1="moving_jaw_so101_v1_link" link2="wrist_link" reason="Never"/>
+    <disable_collisions link1="shoulder_link" link2="upper_arm_link" reason="Adjacent"/>
+</robot>

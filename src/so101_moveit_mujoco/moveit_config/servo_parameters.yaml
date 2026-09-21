@@ -1,0 +1,96 @@
+###############################################
+# SO101 + MuJoCo 的 moveit_servo 运行时参数
+# 格式对应本地 Humble 分支 moveit_servo 2.5.9 (平铺 key, 无命名空间嵌套)
+# 与 gazebo 版的差异见各参数行内注释, 汇总在 doc/moveit_servo_接入记录.md
+###############################################
+
+############################# GENERAL CONFIG #############################
+
+# 发布周期 0.05s (20 Hz): 每条轨迹段寿命 50ms = 5 个 JTC 消费周期 (~10ms),
+# 保证 JTC 采样到段中后段 (进度 60~80%), 指令真实推进。
+# 不能用 0.01s: JTC topic 路径是"新消息整体替换旧轨迹 + 首采样重锚定在段起点",
+# 100Hz 短段流每条消息只被采一次且落在段起点 (进度~0%, 指令≈原地), 实测爬行 0.03 rad/s;
+# gazebo 能用是因 CM/servo 时钟不同源、相位漂移, 消息偶尔活到被采到结尾。
+# mujoco 两侧同源 /clock 相位锁死, 必须用更大的 publish_period 错开。
+publish_period: 0.05
+# use_gazebo 不设 (默认 false): mujoco 侧关节状态来自 /joint_states
+# (so101_joint_state_broadcaster 发布); 而 gazebo 版用 use_gazebo: true 直读 gazebo 状态
+
+move_group_name: so101_arm
+
+############################# INCOMING COMMAND SETTINGS ########################
+
+# 2.5.9 没有 main 的 pose_command_in_topic (PoseStamped 输入), 只有下面两种
+# 直接订阅 xbox_control 栈 teleop 节点的输出 (已带物理量纲 m/s, rad/s)
+cartesian_command_in_topic: /ee_teleop/twist   # TwistStamped 笛卡尔速度命令 (ee_teleop Python 版)
+joint_command_in_topic: ~/delta_joint_cmds      # JointJog 关节微动命令 (joint_teleop C++ 版)
+
+command_in_type: "speed_units"  # "unitless": [-1,1] 摇杆量; "speed_units": m/s 和 rad/s
+# speed_units 模式下 scale 整块被忽略 (teleop 侧的 v_max/omega_max 已决定速度上限),
+# 仅当改回 unitless 时才生效
+scale:
+  linear: 0.2       # 最大线速度 [m/s] (unitless 模式下的缩放系数)
+  rotational: 0.8   # 最大角速度 [rad/s]
+  joint: 0.5        # 关节速度 [rad/s], 只用于 joint_command_in_topic
+
+incoming_command_timeout: 0.1  # 命令超时 [s], 超时即停止, 防止 ROS 丢包停不下来
+
+############################## 坐标系 (2.5.9 专有, main 已删除) ######################
+
+# mujoco URDF (so101.urdf.xacro) 无 world link, root 即 base_link,
+# TF 树里没有 world 帧, 规划系直接用 base_link (gazebo 版用 world)
+planning_frame: base_link
+ee_frame_name: gripper_frame_link  # 末端 link, 用于 IK 和返回 EE 位姿
+robot_link_command_frame: base_link  # Twist 命令参考的坐标系 (基座或末端)
+
+############################## OUTGOING COMMAND SETTINGS #######################
+
+status_topic: ~/status            # Servo 状态输出
+command_out_topic: /so101_arm_controller/joint_trajectory  # 与 mujoco 侧控制器名一致
+command_out_type: trajectory_msgs/JointTrajectory  # 或 std_msgs/Float64MultiArray
+
+publish_joint_positions: true
+publish_joint_velocities: true
+publish_joint_accelerations: false
+
+low_latency_mode: false  # true 时收到 Twist 立即发布 (忽略 publish_period), 2.5.9 专有
+num_outgoing_halt_msgs_to_publish: 4  # 停止时补发的静止命令条数, 2.5.9 专有
+
+############################## PLANNING SCENE MONITOR ##########################
+
+is_primary_planning_scene_monitor: true  # 系统里没有 move_group, 由 Servo 维护主 PlanningScene
+monitored_planning_scene_topic: /planning_scene
+joint_topic: /joint_states  # mujoco 侧由 so101_joint_state_broadcaster 发布 (50Hz)
+
+############################## SMOOTHING PLUGIN ##############################
+
+# 2.5.9 没有 main 的 use_smoothing 开关, 插件名留空才关闭
+smoothing_filter_plugin_name: "online_signal_smoothing::ButterworthFilterPlugin"
+
+############################# COLLISION MONITOR ################################
+
+# 注意: Servo 的 PlanningScene 初始为空, MJCF 场景里的圆柱(MuJoCo 物理)不在其中,
+# 不会触发场景碰撞; 自碰撞检查仍按 URDF 碰撞网格生效。
+# 需要场景避障时应向 /planning_scene 发布障碍物
+check_collisions: true
+collision_check_rate: 10.0  # [Hz]
+self_collision_proximity_threshold: 0.01   # 自碰撞减速距离 [m]
+scene_collision_proximity_threshold: 0.02  # 场景碰撞减速距离 [m]
+
+############################# SINGULARITY CHECKING #############################
+
+# 5 自由度臂的 6x5 雅可比天然条件数偏高(6 维速度空间有 1 维不可达),
+# 用 6DOF 默认值 17/30 会永远处于减速/急停。阈值沿用 gazebo 版标定:
+# 正常工作区条件数 <100 全速; 100~800 线性减速; >=800 才急停(接近真奇异)。
+lower_singularity_threshold: 100.0   # 条件数达到此值开始减速
+hard_stop_singularity_threshold: 800.0  # 条件数达到此值停止
+leaving_singularity_threshold_multiplier: 2.0  # 离开奇异时放宽倍数
+
+############################### JOINT LIMITING #################################
+
+# 2.5.9 用单值 joint_limit_margin; main 改成了 double 数组 joint_limit_margins
+joint_limit_margin: 0.1  # 关节限位缓冲 [rad]
+override_velocity_scaling_factor: 0.0  # 0 = 使用 Servo 内部速度缩放
+
+halt_all_joints_in_joint_mode: true      # 到限位时停止全部关节 (而非只停超限的)
+halt_all_joints_in_cartesian_mode: true

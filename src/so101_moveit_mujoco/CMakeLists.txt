@@ -25,7 +25,7 @@ endif()
 
 ament_package()
 
-install(DIRECTORY launch urdf config mjcf meshes
+install(DIRECTORY launch urdf config mjcf meshes moveit_config
   DESTINATION share/${PROJECT_NAME})
 
 install(PROGRAMS scripts/record_so101.sh scripts/show_fps.py scripts/manual_control.py

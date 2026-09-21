@@ -65,3 +65,29 @@ ros2 launch so101_moveit_mujoco so101_mujoco.launch.py
 ### Q11: 环境里的 mujoco_ros_control 包是哪个？MJCF 和 URDF 各自的角色？
 
 实际包名是 `mujoco_ros2_control`（0.0.3，装在 /opt/ros/humble，PAL/NASA/ros-control 维护）。MuJoCo **只读 MJCF**，URDF 只给 controller_manager 提供 `<ros2_control>` 标签，两者靠 joint 名对齐。它提供的 `ros2_control_node` 一个进程内同时跑 MuJoCo Simulate 物理线程和 controller_manager。
+
+## 四、抓取与交互（2026-09-21）
+
+### Q12: 为什么夹爪碰到红色圆柱它纹丝不动？根本抓不起来
+
+MJCF 语义：**body 里没有 `<joint>` 就是焊死在父 body 上**（与 URDF 的 fixed link 不同，MJCF 无关节 body 是静态焊接，不是"质量为零的固定件"——反直觉但文档明确）。场景里的圆柱最初就是这么写的，表现为"接触检测一切正常、力也有、就是不动"。
+
+修复：body 内加 `<freejoint/>`（或 `<joint type="free"/>`）成为自由刚体。改完必须重新 build（MJCF 在 install 里有一份拷贝）+ 重启仿真。注意自由体被臂撞到会滚走，避障场景的位置不再固定。
+
+### Q13: 圆柱"太滑"夹不住，一挤就滚出去
+
+MuJoCo 默认摩擦三元组 `friction="1.0 0.005 0.0001"`（切向/扭转/滚动），**滚动摩擦 0.0001 约等于零**。圆截面自由刚体受单动颚挤压时不是"打滑"而是直接滚出张口。且 `condim` 默认 3（无法向扭转维），想靠扭转摩擦稳住也不行。
+
+修复（`so101_scene.xml` 圆柱 geom）：
+
+```xml
+<geom name="cylinder_geom" ... mass="0.05" friction="2.0 0.05 0.05" condim="4"/>
+```
+
+两点：① 接触对摩擦取两端较大值，只改圆柱即可；② `condim=4` 必须**显式声明在圆柱端**——手指碰撞 geom 是默认 condim=3，按"取两者较大值"规则不写就不生效。
+
+### Q14: 遥操时夹爪张开角度特别小（只有几度）
+
+量纲错配，不是仿真问题：mujoco 夹爪是 **position 控制器**（`JointGroupPositionController`），指令值是关节位置（rad，限位 [-0.175, 1.745]）；而 xbox_control 默认配置的 `gripper_open_value: 0.1` 是给 gazebo **effort 控制器**（N·m）的。0.1 被当成 0.1 rad ≈ 5.7°，所以"夹角很小"。
+
+修复：遥操时用 mujoco 专用配置（xbox_control 仓库 `joint_teleop/config/mujoco_teleop.yaml`，开 1.5 / 合 -0.1，已实测验证到位）。gazebo 场景继续用默认配置。

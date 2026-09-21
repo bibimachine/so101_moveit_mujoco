@@ -24,10 +24,12 @@ SO101 机械臂 + ROS 2 + MuJoCo 的学习实践项目。流程对照 [so101_mov
 - [x] MuJoCo Simulate 窗口 + headless 模式 + RViz 显示
 - [x] 数据采集：`ros2 bag record` 封装脚本（mcap，话题含控制指令，对齐 LeRobot 数据集要素）
 - [x] 单目相机：MJCF 固定相机 + ros2_control `<sensor>` 声明，发布 RGB/深度/camera_info（与 gazebo 版同位姿同话题）
+- [x] 接入 MoveIt Servo：关节/笛卡尔双通道实时微动（JointJog/TwistStamped），碰撞/限位/奇异安全壳，输出接 MuJoCo JTC（**20Hz publish_period**——mujoco 下 CM/servo 同源时钟相位锁死，100Hz 会触发 JTC 替换语义爬行，现配置实测达成摇杆指令速度 ~40%，planning_frame 用 base_link；排查全记录与去 servo 方案评估见 doc/moveit_servo_接入记录.md 第 5 节）
 
 ## TODO
 
-- [ ] 接入 MoveIt 2（运动规划、碰撞检测）
+- [ ] 接入 MoveIt 规划器（OMPL 全局规划、Planning Scene 批处理；Servo 已覆盖实时层）
+- [ ] joint_teleop 速度补偿：`omega_max` 1.5 → ~3.0，对齐 gazebo 手感（mujoco 链路实际速度 ≈ 指令×0.4，见 doc/moveit_servo_接入记录.md 第 5.3 节）
 
 ## 快速开始
 
@@ -46,6 +48,10 @@ ros2 launch so101_moveit_mujoco so101_mujoco.launch.py rviz:=false
 
 # 纯显示（mock 硬件，启动快，不起 MuJoCo）
 ros2 launch so101_moveit_mujoco so101_display.launch.py
+
+# MoveIt Servo 实时微动（需先启动 mujoco launch；手柄遥操在 xbox_control 工作区，
+# mujoco 夹爪是 position 控制器，gripper 值需按限位内位置值覆盖）
+ros2 launch so101_moveit_mujoco so101_moveit_servo.launch.py headless:=true
 ```
 
 ## 控制示例
@@ -93,5 +99,6 @@ ros2 run so101_moveit_mujoco record_so101.sh -d 120    # 每 120s 切分一个 b
 ## 文档
 
 - [doc/文件说明.md](doc/文件说明.md) — 各文件作用、控制命令、与 gazebo 版架构对照
+- [doc/moveit_servo_接入记录.md](doc/moveit_servo_接入记录.md) — Servo 接入 MuJoCo 版差异（planning_frame、use_gazebo、夹爪 position 控制器、碰撞检查范围）
 - [doc/mujoco_qa.md](doc/mujoco_qa.md) — MuJoCo 原理问答（启动链路、MJCF 格式机制等）
 - [doc/control_basics.md](doc/control_basics.md) — 控制基础（PID 原理、弧度/度、Gazebo 与 MuJoCo 差异）
