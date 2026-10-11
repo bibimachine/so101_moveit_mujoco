@@ -79,10 +79,11 @@ ros2_controllers 2.53.1 JTC 的 topic 路径(`~/joint_trajectory`,servo 的默�
 "首采样锚定、进度 ≈ 0%" 的时刻——执行的位置指令 ≈ 原地不动。
 数学上每条段的平均有效进度 ≈ 0,故速度趋近 0。
 
-**gazebo 版为什么同配置能用**:gazebo 的 CM 用 wall-clock、servo 用 sim-time,两者相位
-缓慢漂移,消息偶尔"活到"被采样到段结尾(进度 →100%),平均下来速度正常。
-mujoco 的 CM 与 servo 同源 `/clock`,**相位锁死**,每条消息都精确死在同一个相位点,
-问题被放大到全量。
+**gazebo 版为什么同配置能用**:mujoco 的 CM 与 servo 同源 `/clock`,**相位锁死**,
+每条消息都精确死在同一个相位点(进度 ≈0),问题被放大到全量;gazebo 的 CM 节拍由
+gzserver 自身的实时循环驱动、与 `/clock` 解耦,两者相位缓慢漂移,消息偶尔"活到"
+被采样到段结尾(进度 →100%),平均下来速度正常。
+(通俗版总结与源码级核实见 5.8 节;本节"gazebo CM 用 wall-clock"的旧表述已修正。)
 
 ### 5.3 修复与速度天花板
 
@@ -151,6 +152,91 @@ mujoco 的 CM 与 servo 同源 `/clock`,**相位锁死**,每条消息都精确�
 - 仿真栈:`nohup ros2 launch so101_moveit_mujoco so101_mujoco.launch.py headless:=true rviz:=false &`;
   servo:`ros2 launch so101_moveit_mujoco so101_moveit_servo.launch.py`。
 - 执行器实际力矩观测:`/mujoco_actuators_states` 的 effort 字段(定位饱和全靠它)。
+
+### 5.7 三层周期的对齐关系(2026-09-27 梳理)
+
+全链共三层频率,各层只对紧邻的下一层做**整数倍**对齐,跨层不用对齐:
+
+```
+servo 0.05s ──(5×)──> CM/JTC 0.01s ──(5×)──> MuJoCo 物理 0.002s
+```
+
+| 层 | 周期 / 频率 | 由什么决定 | 调它影响什么 |
+|---|---|---|---|
+| servo publish_period | 0.05s (20Hz,`servo_parameters.yaml`) | 速度天花板 | 天花板 ≈ (M-1)/(2M),M = publish_period / T_control;延迟/摇杆手感 |
+| ros2_control CM (JTC) | 0.01s (100Hz,`so101_ros2_control.yaml` 的 update_rate) | 控制平滑度与负载 | 插值粒度、CPU;也是 servo 的相位参考 |
+| MuJoCo 物理 timestep | 0.002s (500Hz,MJCF 未写 timestep,用默认值) | **接触/执行器刚度决定的数值稳定性** | 接触抖动、发散;不要向控制层对齐 |
+
+规则:
+
+1. **T_control = N × T_physics**(N 正整数):每个控制 tick 内是整数个完整物理步,
+   command 值在一个 tick 内不变,无"半个步"相位错乱。反向不行——物理步长不能大于控制周期。
+2. **物理步长按稳定性选**:本场景接触极硬(kp=998、0.5mm 压入 13N),timestep 是刚度的
+   硬约束,0.002s 很宽裕;为"对齐"改成 0.01s 反而会让接触抖甚至发散。
+3. **publish_period = M × T_control**:这是调 40% 天花板唯一的手柄(M=1→0%,5→40%,10→44%)。
+   同一机制也解释了 gazebo 版为什么同配置能跑:mujoco 两侧同源 `/clock` 相位锁死,病被放大到
+   全量;gazebo 的 CM 节拍与 `/clock` 解耦,相位漂移让部分消息"活到"段尾(精确机制见 5.8)。
+
+另有一个**独立的** 50Hz:`so101_joint_state_broadcaster` 的 update_rate,只管
+`/joint_states` / TF 的刷新率(决定 servo 反馈时延),不在上面这条控制链上;
+反馈延迟大时调高它,与速度天花板无关。
+
+### 5.8 时钟/相位问题通俗总结(2026-10-12 补充,含对 5.2 节表述的源码级修正)
+
+**一句话**:servo 发段和 JTC 采样都是 10ms 一拍、都跟 `/clock` 走。mujoco 里两个节拍器
+被**同一个时钟锁死**,每条轨迹段永远死在"刚发出来、还没生效"的相位上;gazebo 里两套
+节拍互不相干、相位随机漂移,反而把问题平均掉了。这不是"频率一致"的病,是
+"频率一致**且相位锁死**"的病。
+
+**链条拆开就三步**:
+
+1. **servo 发的是"迷你轨迹段"**:摇杆速度 v 下,每 publish_period 发一条单点段,
+   含义是"从当前位置出发,10ms 后走到 `当前位置 + v×0.01`"。
+
+2. **JTC 两条规则把短段变成"原地不动"指令**:① 替换语义——topic 路径无队列,新消息到
+   就整体扔掉旧段;② 首采样锚定——段的起点不写在消息里,JTC 第一次采样时才锚定到
+   机器人当时的位置。publish_period = 控制周期 = 10ms 时的时间轴:
+
+   ```
+   t=0ms    servo 发段A → JTC 采样A(刚锚定,进度 0%) → 指令 = 当前位置
+   t=10ms   servo 发段B,段A 只被采样过那一次,被整体扔掉
+            → JTC 采样B(刚锚定,进度 0%) → 指令 = 当前位置
+   t=20ms   段C 顶掉段B …… 永远循环
+   ```
+
+   段A 的曲线在数学上含有 +10%…+90% 的"前进指令",但 JTC 只在节拍点查曲线,每个
+   节拍点读到的都是刚出生、进度 0% 的新段。所以 JTC 实际发出的指令流全是
+   "原地不动",速度 ≈ 0(实测剩 6%,来自消息到达相对节拍的微小相位偏移)。
+   形象说法:**胡萝卜永远挂在鼻子前 5mm,且每 10ms 重新挂一次**——马永远差 5mm,
+   胡萝卜也永远吃不到。
+
+3. **相位锁死还是漂移,决定病发不发**:两个节拍器同源(mujoco)→ 每条段精确死在同一
+   相位点,100% 消息进度 ≈0 → 全量发病(6%);不同源(gazebo)→ 相位漂移,有的消息
+   活到 20%、偶尔活到 100%,长期平均 ≈50% → 看起来正常。
+
+**对 5.2 节旧表述的修正**(2026-10-12 查两边源码核实):旧文说"gazebo 的 CM 用
+wall-clock、servo 用 sim-time"——**不准确**,两边 CM 传给控制器的时间戳都是 sim time
+(gazebo_ros2_control 0.4.10 插件源码里就是 `World()->SimTime()`)。真正的区别是
+**CM 的节拍由什么驱动**:
+
+| | 时间戳 | CM 节拍的驱动源 | servo 节拍驱动源 | 相位 |
+|---|---|---|---|---|
+| mujoco | sim time | `/clock`(CM 线程 `sleep_until` 主动等) | `/clock`(定时器) | 锁死 |
+| gazebo | sim time | gzserver 自己的实时迭代循环(worldUpdateBegin 事件) | `/clock` 消息(DDS 跨进程) | 漂移/抖动 |
+
+- mujoco_ros2_control 的 `ros2_control_node` 在 `use_sim_time` 下用
+  `cm->get_clock()->sleep_until(now + period)` 跑循环——CM 和 servo 定时器是**同一个
+  `/clock` 的两个反应者**,相对相位由处理顺序和传输延迟固定,永远落在进度 ≈0% 的
+  倒霉位置上。
+- gazebo_ros2_control 的 CM update 挂在 gazebo 的 worldUpdateBegin 事件上,由 gzserver
+  进程内部"跑一步、sleep 到下一时刻"的实时循环驱动;servo 在另一个进程里由 `/clock`
+  消息触发。两套调度互不相干,gzserver 的 sleep 误差 + OS 调度 + DDS 传输抖动让相位
+  持续随机游走——大部分消息早夭,偶尔有活到 100% 的,平均下来速度正常。
+
+**结论与修复不变**:`publish_period: 0.05`(段寿命 5 拍,采样进度 0/20/40/60/80%,
+天花板 40%,实测 39%,见 5.3)。把 publish_period 降到 0.01 以下、或让两边时钟
+不同源"对齐回 gazebo",都不是正确方向——锁相这个坑在 mujoco 架构下迟早还会以别的
+形式出现。
 
 ## 6. 待观察项
 
